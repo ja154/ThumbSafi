@@ -33,7 +33,7 @@ const StartScreen: React.FC<StartScreenProps> = ({ onGenerate, onUpload, isLoadi
   return (
     <div className="w-full max-w-5xl mx-auto text-center p-8 flex flex-col items-center justify-center animate-fade-in">
         <h1 className="text-5xl font-extrabold tracking-tight text-gray-100 sm:text-6xl md:text-7xl" style={{fontFamily: "'Archivo Black', sans-serif"}}>
-          AI Thumbnail <span className="text-blue-400">Studio</span>
+          Thumb<span className="text-blue-400">Safi</span>
         </h1>
         <p className="max-w-3xl mt-4 text-lg text-gray-400 md:text-xl">
           Create stunning, click-worthy thumbnails in seconds. Describe your idea to generate a unique background with AI, or upload your own image to get started.
