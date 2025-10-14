@@ -4,13 +4,14 @@
 */
 
 import React, { useState, useCallback, useRef } from 'react';
-import { generateImage, editImage } from './services/geminiService';
+import { generateImage, editImage, createThumbnailFromImage } from './services/geminiService';
 import Header from './components/Header';
 import Spinner from './components/Spinner';
 import StartScreen from './components/StartScreen';
 import ControlPanel from './components/FilterPanel';
 import EditorPreview from './components/EditorPreview';
 import RetouchPanel from './components/RetouchPanel';
+import UploadEditModal from './components/UploadEditModal';
 import { TextIcon, StartOverIcon, BrushIcon } from './components/icons';
 
 // Helper to convert a File object to a base64 data URL
@@ -44,6 +45,7 @@ const App: React.FC = () => {
   const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadedImageForEditing, setUploadedImageForEditing] = useState<string | null>(null);
 
   const [editorMode, setEditorMode] = useState<EditorMode>('text');
   const [retouchMask, setRetouchMask] = useState<string | null>(null);
@@ -71,14 +73,33 @@ const App: React.FC = () => {
     setError(null);
     try {
       const imageUrl = await fileToDataURL(file);
-      setBaseImage(imageUrl);
-      setEditorMode('text');
+      setUploadedImageForEditing(imageUrl);
     } catch (err) {
       setError('Failed to load the image file.');
     } finally {
       setIsLoading(false);
     }
   }, []);
+
+  const handleGenerateThumbnailFromUpload = useCallback(async (prompt: string) => {
+    if (!uploadedImageForEditing) return;
+
+    const imageToProcess = uploadedImageForEditing;
+    setUploadedImageForEditing(null); // Close modal
+    setIsLoading(true);
+    setError(null);
+
+    try {
+        const imageUrl = await createThumbnailFromImage(imageToProcess, prompt);
+        setBaseImage(imageUrl);
+        setEditorMode('text');
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        setError(errorMessage);
+    } finally {
+        setIsLoading(false);
+    }
+  }, [uploadedImageForEditing]);
 
   const handleStartOver = useCallback(() => {
     setBaseImage(null);
@@ -320,6 +341,13 @@ const App: React.FC = () => {
       <Header />
       <main className={`flex-grow w-full max-w-[1600px] mx-auto p-4 md:p-8 flex justify-center ${baseImage ? 'items-start' : 'items-center'}`}>
         {renderContent()}
+        {uploadedImageForEditing && (
+            <UploadEditModal
+                imageSrc={uploadedImageForEditing}
+                onClose={() => setUploadedImageForEditing(null)}
+                onGenerate={handleGenerateThumbnailFromUpload}
+            />
+        )}
       </main>
     </div>
   );

@@ -85,3 +85,48 @@ export const editImage = async (imageWithTransparency: string, prompt: string): 
         throw new Error('An unknown error occurred during image editing.');
     }
 };
+
+/**
+ * Creates a new thumbnail by transforming a base image using a text prompt.
+ * @param baseImage The base64 data URL of the source image.
+ * @param prompt The text prompt describing the desired transformation.
+ * @returns A promise that resolves to the data URL of the generated thumbnail image.
+ */
+export const createThumbnailFromImage = async (baseImage: string, prompt:string): Promise<string> => {
+    console.log(`Creating thumbnail from image with prompt: ${prompt}`);
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+
+    const dataUrlToBlob = (dataUrl: string) => {
+        const [header, base64Data] = dataUrl.split(',');
+        const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+        return { data: base64Data, mimeType };
+    };
+    
+    try {
+        const imagePart = { inlineData: dataUrlToBlob(baseImage) };
+        const textPart = { text: `Transform this image into a vibrant, high-resolution, eye-catching 16:9 thumbnail for a video. Apply the following instruction: "${prompt}". Ensure the final image is compelling and suitable for platforms like YouTube.` };
+        
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: [imagePart, textPart] },
+            config: {
+                responseModalities: [Modality.IMAGE, Modality.TEXT],
+            },
+        });
+        
+        const imageResponsePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
+        if (imageResponsePart?.inlineData) {
+            const base64ImageBytes = imageResponsePart.inlineData.data;
+            const mimeType = imageResponsePart.inlineData.mimeType;
+            return `data:${mimeType};base64,${base64ImageBytes}`;
+        } else {
+             throw new Error('The AI model did not return an edited image. This might be due to content restrictions. Try a different prompt.');
+        }
+    } catch (error) {
+        console.error("Error creating thumbnail from image:", error);
+        if (error instanceof Error) {
+            throw new Error(`Failed to create thumbnail from image: ${error.message}`);
+        }
+        throw new Error('An unknown error occurred during image transformation.');
+    }
+};
