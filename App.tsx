@@ -3,13 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import React, { useState, useCallback } from 'react';
-import { generateImage } from './services/geminiService';
+import React, { useState, useCallback, useRef } from 'react';
+import { generateImage, editImage } from './services/geminiService';
 import Header from './components/Header';
 import Spinner from './components/Spinner';
 import StartScreen from './components/StartScreen';
-import ControlPanel from './components/FilterPanel'; // Repurposed to be the ControlPanel
-import { TextIcon, StartOverIcon } from './components/icons';
+import ControlPanel from './components/FilterPanel';
+import EditorPreview from './components/EditorPreview';
+import RetouchPanel from './components/RetouchPanel';
+import { TextIcon, StartOverIcon, BrushIcon } from './components/icons';
 
 // Helper to convert a File object to a base64 data URL
 const fileToDataURL = (file: File): Promise<string> => {
@@ -34,6 +36,8 @@ export type TextElement = {
   outlineWidth: number;
 };
 
+type EditorMode = 'text' | 'retouch';
+
 const App: React.FC = () => {
   const [baseImage, setBaseImage] = useState<string | null>(null);
   const [textElements, setTextElements] = useState<TextElement[]>([]);
@@ -41,12 +45,19 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [editorMode, setEditorMode] = useState<EditorMode>('text');
+  const [retouchMask, setRetouchMask] = useState<string | null>(null);
+  const [brushSize, setBrushSize] = useState<number>(40);
+  const maskCanvasRef = useRef<HTMLCanvasElement>(null);
+
+
   const handleGenerate = useCallback(async (prompt: string) => {
     setIsLoading(true);
     setError(null);
     try {
       const imageUrl = await generateImage(prompt);
       setBaseImage(imageUrl);
+      setEditorMode('text');
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       setError(errorMessage);
@@ -61,6 +72,7 @@ const App: React.FC = () => {
     try {
       const imageUrl = await fileToDataURL(file);
       setBaseImage(imageUrl);
+      setEditorMode('text');
     } catch (err) {
       setError('Failed to load the image file.');
     } finally {
@@ -74,6 +86,8 @@ const App: React.FC = () => {
     setSelectedTextId(null);
     setError(null);
     setIsLoading(false);
+    setRetouchMask(null);
+    setEditorMode('text');
   }, []);
 
   const addText = useCallback(() => {
@@ -103,6 +117,55 @@ const App: React.FC = () => {
     }
   }, [selectedTextId]);
 
+  const handleClearMask = useCallback(() => {
+    if (maskCanvasRef.current) {
+        const canvas = maskCanvasRef.current;
+        const ctx = canvas.getContext('2d');
+        ctx?.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    setRetouchMask(null);
+  }, []);
+  
+  const handleApplyRetouch = useCallback(async (prompt: string) => {
+    if (!baseImage || !retouchMask) return;
+
+    setIsLoading(true);
+    setError(null);
+    try {
+        const image = new Image();
+        image.crossOrigin = 'anonymous';
+        image.src = baseImage;
+        const mask = new Image();
+        mask.crossOrigin = 'anonymous';
+        mask.src = retouchMask;
+
+        await Promise.all([
+            new Promise(res => { image.onload = res; image.onerror = () => { throw new Error('Failed to load base image for editing.')}}),
+            new Promise(res => { mask.onload = res; mask.onerror = () => { throw new Error('Failed to load mask for editing.')}}),
+        ]);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error("Could not get canvas context");
+
+        ctx.drawImage(image, 0, 0);
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.drawImage(mask, 0, 0, image.width, image.height);
+
+        const imageWithTransparency = canvas.toDataURL('image/png');
+        const editedImageUrl = await editImage(imageWithTransparency, prompt);
+        
+        setBaseImage(editedImageUrl);
+        handleClearMask();
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        setError(errorMessage);
+    } finally {
+        setIsLoading(false);
+    }
+  }, [baseImage, retouchMask, handleClearMask]);
 
   const handleDownload = useCallback(() => {
     if (!baseImage) return;
@@ -122,23 +185,17 @@ const App: React.FC = () => {
     img.onload = () => {
       ctx.drawImage(img, 0, 0, thumbnailWidth, thumbnailHeight);
 
-      // It's important to draw text elements in order
       textElements.forEach(text => {
         const x = (text.left / 100) * thumbnailWidth;
         const y = (text.top / 100) * thumbnailHeight;
-
         ctx.font = `900 ${text.fontSize}px ${text.fontFamily}`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-
-        // Draw outline
         if (text.outlineWidth > 0) {
             ctx.strokeStyle = text.outlineColor;
-            ctx.lineWidth = text.outlineWidth * 2; // Canvas lineWidth is centered on the path
+            ctx.lineWidth = text.outlineWidth * 2;
             ctx.strokeText(text.content, x, y);
         }
-
-        // Draw fill
         ctx.fillStyle = text.color;
         ctx.fillText(text.content, x, y);
       });
@@ -177,72 +234,82 @@ const App: React.FC = () => {
       return <StartScreen onGenerate={handleGenerate} onUpload={handleUpload} isLoading={isLoading} />;
     }
 
+    const editorButtonClasses = (mode: EditorMode) => `flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-colors ${editorMode === mode ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-white/10'}`;
+
     return (
-      <div className="w-full max-w-7xl mx-auto flex flex-col lg:flex-row items-start gap-6 animate-fade-in">
-        {/* Left Side: Preview & Actions */}
-        <div className="flex-grow w-full flex flex-col gap-4">
-            {/* Preview Canvas */}
-            <div className="w-full aspect-video bg-black/50 rounded-lg shadow-2xl overflow-hidden relative border border-gray-700">
-                {isLoading && (
-                    <div className="absolute inset-0 bg-black/70 z-30 flex flex-col items-center justify-center gap-4 animate-fade-in">
-                        <Spinner />
-                    </div>
-                )}
-                <img src={baseImage} alt="Thumbnail background" className="w-full h-full object-cover" />
-                {textElements.map(text => (
-                    <div
-                        key={text.id}
-                        onClick={() => setSelectedTextId(text.id)}
-                        className={`absolute cursor-pointer p-2 ${selectedTextId === text.id ? 'outline-dashed outline-2 outline-blue-400' : ''}`}
-                        style={{
-                            top: `${text.top}%`,
-                            left: `${text.left}%`,
-                            color: text.color,
-                            fontSize: `${text.fontSize}px`,
-                            fontFamily: `'${text.fontFamily}', sans-serif`,
-                            fontWeight: 900,
-                            lineHeight: 1,
-                            textShadow: getTextShadow(text)
-                        }}
-                    >
-                        {text.content}
-                    </div>
-                ))}
-            </div>
-            {/* Action Buttons */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                 <button 
-                    onClick={handleStartOver}
-                    className="flex items-center justify-center text-center bg-white/10 border border-white/20 text-gray-200 font-semibold py-3 px-5 rounded-md transition-all duration-200 ease-in-out hover:bg-white/20 hover:border-white/30 active:scale-95 text-base"
-                >
-                    <StartOverIcon className="w-5 h-5 mr-2" />
-                    Start Over
-                </button>
-                 <button 
-                    onClick={addText}
-                    className="flex items-center justify-center text-center bg-white/10 border border-white/20 text-gray-200 font-semibold py-3 px-5 rounded-md transition-all duration-200 ease-in-out hover:bg-white/20 hover:border-white/30 active:scale-95 text-base"
-                >
-                    <TextIcon className="w-5 h-5 mr-2" />
-                    Add Text
-                </button>
-                <button 
-                    onClick={handleDownload}
-                    className="col-span-2 sm:col-span-1 bg-gradient-to-br from-green-600 to-green-500 text-white font-bold py-3 px-5 rounded-md transition-all duration-300 ease-in-out shadow-lg shadow-green-500/20 hover:shadow-xl hover:shadow-green-500/40 hover:-translate-y-px active:scale-95 active:shadow-inner text-base"
-                >
-                    Download Thumbnail
-                </button>
-            </div>
+      <div className="w-full flex flex-col items-center gap-4 animate-fade-in">
+        {/* Editor Mode Toolbar */}
+        <div className="bg-gray-800/60 border border-gray-700 p-1 rounded-lg flex items-center gap-1 backdrop-blur-sm">
+            <button onClick={() => setEditorMode('text')} className={editorButtonClasses('text')}>
+                <TextIcon className="w-5 h-5" /> Text & Layers
+            </button>
+            <button onClick={() => setEditorMode('retouch')} className={editorButtonClasses('retouch')}>
+                <BrushIcon className="w-5 h-5" /> AI Retouch
+            </button>
         </div>
-        {/* Right Side: Control Panel */}
-        <div className="w-full lg:w-96 lg:max-w-sm flex-shrink-0">
-            <ControlPanel
-                textElements={textElements}
-                selectedTextId={selectedTextId}
-                onSelectText={setSelectedTextId}
-                onAddText={addText}
-                onDeleteText={deleteText}
-                onUpdateText={updateText}
-            />
+
+        <div className="w-full max-w-7xl mx-auto flex flex-col lg:flex-row items-start gap-6">
+            {/* Left Side: Preview & Actions */}
+            <div className="flex-grow w-full flex flex-col gap-4">
+                <EditorPreview
+                    baseImage={baseImage}
+                    textElements={textElements}
+                    selectedTextId={selectedTextId}
+                    onSelectText={setSelectedTextId}
+                    getTextShadow={getTextShadow}
+                    editorMode={editorMode}
+                    brushSize={brushSize}
+                    onMaskChange={setRetouchMask}
+                    isLoading={isLoading}
+                    maskCanvasRef={maskCanvasRef}
+                />
+                {/* Action Buttons */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <button 
+                        onClick={handleStartOver}
+                        className="flex items-center justify-center text-center bg-white/10 border border-white/20 text-gray-200 font-semibold py-3 px-5 rounded-md transition-all duration-200 ease-in-out hover:bg-white/20 hover:border-white/30 active:scale-95 text-base"
+                    >
+                        <StartOverIcon className="w-5 h-5 mr-2" />
+                        Start Over
+                    </button>
+                    {editorMode === 'text' && (
+                        <button 
+                            onClick={addText}
+                            className="flex items-center justify-center text-center bg-white/10 border border-white/20 text-gray-200 font-semibold py-3 px-5 rounded-md transition-all duration-200 ease-in-out hover:bg-white/20 hover:border-white/30 active:scale-95 text-base"
+                        >
+                            <TextIcon className="w-5 h-5 mr-2" />
+                            Add Text
+                        </button>
+                    )}
+                    <button 
+                        onClick={handleDownload}
+                        className={`col-span-2 ${editorMode === 'text' ? 'sm:col-span-1' : 'sm:col-span-2'} bg-gradient-to-br from-green-600 to-green-500 text-white font-bold py-3 px-5 rounded-md transition-all duration-300 ease-in-out shadow-lg shadow-green-500/20 hover:shadow-xl hover:shadow-green-500/40 hover:-translate-y-px active:scale-95 active:shadow-inner text-base`}
+                    >
+                        Download Thumbnail
+                    </button>
+                </div>
+            </div>
+            {/* Right Side: Control Panel */}
+            <div className="w-full lg:w-96 lg:max-w-sm flex-shrink-0">
+                {editorMode === 'text' ? (
+                    <ControlPanel
+                        textElements={textElements}
+                        selectedTextId={selectedTextId}
+                        onSelectText={setSelectedTextId}
+                        onDeleteText={deleteText}
+                        onUpdateText={updateText}
+                    />
+                ) : (
+                    <RetouchPanel
+                        onApplyRetouch={handleApplyRetouch}
+                        isLoading={isLoading}
+                        brushSize={brushSize}
+                        onBrushSizeChange={setBrushSize}
+                        onClearMask={handleClearMask}
+                        hasMask={!!retouchMask}
+                    />
+                )}
+            </div>
         </div>
       </div>
     );

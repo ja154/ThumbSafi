@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Modality } from "@google/genai";
 
 /**
  * Generates an image using generative AI based on a text prompt.
@@ -38,5 +38,50 @@ export const generateImage = async (prompt: string): Promise<string> => {
             throw new Error(`Failed to generate image: ${error.message}`);
         }
         throw new Error('An unknown error occurred during image generation.');
+    }
+};
+
+/**
+ * Edits an image by filling in transparent areas based on a prompt.
+ * @param imageWithTransparency The base64 data URL of the image (PNG) with transparent areas to be filled.
+ * @param prompt The text prompt describing how to fill the transparent areas.
+ * @returns A promise that resolves to the data URL of the edited image.
+ */
+export const editImage = async (imageWithTransparency: string, prompt: string): Promise<string> => {
+    console.log(`Editing image with prompt: ${prompt}`);
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+
+    const dataUrlToBlob = (dataUrl: string) => {
+        const [header, base64Data] = dataUrl.split(',');
+        const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+        return { data: base64Data, mimeType };
+    };
+    
+    try {
+        const imagePart = { inlineData: dataUrlToBlob(imageWithTransparency) };
+        const textPart = { text: `Fill in the transparent area of the image based on this instruction: "${prompt}". Do not change any other part of the image.` };
+        
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: [imagePart, textPart] },
+            config: {
+                responseModalities: [Modality.IMAGE, Modality.TEXT],
+            },
+        });
+        
+        const imageResponsePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
+        if (imageResponsePart?.inlineData) {
+            const base64ImageBytes = imageResponsePart.inlineData.data;
+            const mimeType = imageResponsePart.inlineData.mimeType;
+            return `data:${mimeType};base64,${base64ImageBytes}`;
+        } else {
+             throw new Error('The AI model did not return an edited image. This might be due to content restrictions. Try a different prompt or selection.');
+        }
+    } catch (error) {
+        console.error("Error editing image:", error);
+        if (error instanceof Error) {
+            throw new Error(`Failed to edit image: ${error.message}`);
+        }
+        throw new Error('An unknown error occurred during image editing.');
     }
 };
