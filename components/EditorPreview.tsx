@@ -5,7 +5,6 @@
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import type { TextElement } from '../App';
-import Spinner from './Spinner';
 
 interface EditorPreviewProps {
   baseImage: string | null;
@@ -140,12 +139,6 @@ const EditorPreview: React.FC<EditorPreviewProps> = ({
 
   return (
     <div ref={containerRef} className="w-full aspect-video bg-black/50 rounded-lg shadow-2xl overflow-hidden relative border border-gray-700">
-        {isLoading && (
-            <div className="absolute inset-0 bg-black/70 z-30 flex flex-col items-center justify-center gap-4 animate-fade-in">
-                <Spinner />
-                <p className="text-gray-300">Applying AI magic...</p>
-            </div>
-        )}
         {baseImage && <img src={baseImage} alt="Thumbnail background" className="w-full h-full object-cover" />}
         {textElements.map(text => (
             <div

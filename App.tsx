@@ -4,14 +4,14 @@
 */
 
 import React, { useState, useCallback, useRef } from 'react';
-import { generateImage, editImage, createThumbnailFromImage } from './services/geminiService';
+import { generateImage, editImage, getThumbnailDesign, removeImageBackground, DesignSpecification, TextSpec } from './services/geminiService';
 import Header from './components/Header';
 import Spinner from './components/Spinner';
 import StartScreen from './components/StartScreen';
 import ControlPanel from './components/FilterPanel';
 import EditorPreview from './components/EditorPreview';
 import RetouchPanel from './components/RetouchPanel';
-import UploadEditModal from './components/UploadEditModal';
+import DesignerModal from './components/DesignerModal';
 import { TextIcon, StartOverIcon, BrushIcon } from './components/icons';
 
 // Helper to convert a File object to a base64 data URL
@@ -37,6 +37,13 @@ export type TextElement = {
   outlineWidth: number;
 };
 
+export type DesignerData = {
+    topic: string;
+    mainText: string;
+    secondaryText: string;
+    subjectImage: File | null;
+};
+
 type EditorMode = 'text' | 'retouch';
 
 const App: React.FC = () => {
@@ -44,62 +51,87 @@ const App: React.FC = () => {
   const [textElements, setTextElements] = useState<TextElement[]>([]);
   const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [loadingMessage, setLoadingMessage] = useState<string>('Generating...');
   const [error, setError] = useState<string | null>(null);
-  const [uploadedImageForEditing, setUploadedImageForEditing] = useState<string | null>(null);
+  const [isDesignerOpen, setIsDesignerOpen] = useState(false);
 
   const [editorMode, setEditorMode] = useState<EditorMode>('text');
   const [retouchMask, setRetouchMask] = useState<string | null>(null);
   const [brushSize, setBrushSize] = useState<number>(40);
   const maskCanvasRef = useRef<HTMLCanvasElement>(null);
 
-
-  const handleGenerate = useCallback(async (prompt: string) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const imageUrl = await generateImage(prompt);
-      setBaseImage(imageUrl);
-      setEditorMode('text');
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-      setError(errorMessage);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  const handleUpload = useCallback(async (file: File) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const imageUrl = await fileToDataURL(file);
-      setUploadedImageForEditing(imageUrl);
-    } catch (err) {
-      setError('Failed to load the image file.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  const handleGenerateThumbnailFromUpload = useCallback(async (prompt: string) => {
-    if (!uploadedImageForEditing) return;
-
-    const imageToProcess = uploadedImageForEditing;
-    setUploadedImageForEditing(null); // Close modal
+  const handleDesignThumbnail = useCallback(async (data: DesignerData) => {
+    setIsDesignerOpen(false);
     setIsLoading(true);
     setError(null);
 
     try {
-        const imageUrl = await createThumbnailFromImage(imageToProcess, prompt);
-        setBaseImage(imageUrl);
+        // Step 1: Get the design spec from the AI
+        setLoadingMessage('Designing layout...');
+        const design: DesignSpecification = await getThumbnailDesign(data.topic, data.mainText, data.secondaryText);
+        
+        // Step 2: Generate the background image
+        setLoadingMessage('Creating background...');
+        const generatedBackground = await generateImage(design.backgroundPrompt);
+        
+        let finalImage = generatedBackground;
+
+        // Step 3 (Optional): Process and composite the subject image
+        if (data.subjectImage) {
+            setLoadingMessage('Removing background from subject...');
+            const subjectDataUrl = await fileToDataURL(data.subjectImage);
+            const subjectWithAlpha = await removeImageBackground(subjectDataUrl);
+
+            setLoadingMessage('Compositing image...');
+            const bgImg = new Image();
+            bgImg.src = generatedBackground;
+            const subjectImg = new Image();
+            subjectImg.src = subjectWithAlpha;
+
+            await Promise.all([
+                new Promise(res => { bgImg.onload = res; }),
+                new Promise(res => { subjectImg.onload = res; }),
+            ]);
+
+            const canvas = document.createElement('canvas');
+            canvas.width = 1280;
+            canvas.height = 720;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) throw new Error("Could not get canvas context");
+            
+            ctx.drawImage(bgImg, 0, 0, 1280, 720);
+            
+            // Smartly place subject on the right third, scaled nicely
+            const maxSubHeight = 720 * 0.9;
+            const maxSubWidth = 1280 / 3;
+            const scale = Math.min(maxSubWidth / subjectImg.width, maxSubHeight / subjectImg.height);
+            const sw = subjectImg.width * scale;
+            const sh = subjectImg.height * scale;
+            const sx = 1280 - sw - (1280 * 0.05); // place with 5% margin from right
+            const sy = (720 - sh) / 2; // vertically center
+            ctx.drawImage(subjectImg, sx, sy, sw, sh);
+
+            finalImage = canvas.toDataURL('image/png');
+        }
+
+        setBaseImage(finalImage);
+
+        // Step 4: Populate text elements from the design spec
+        const newTextElements = design.textElements.map((spec: TextSpec, index: number) => ({
+            id: `text-${Date.now()}-${index}`,
+            ...spec
+        }));
+        setTextElements(newTextElements);
         setEditorMode('text');
+
     } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
         setError(errorMessage);
     } finally {
         setIsLoading(false);
+        setLoadingMessage('Generating...');
     }
-  }, [uploadedImageForEditing]);
+  }, []);
 
   const handleStartOver = useCallback(() => {
     setBaseImage(null);
@@ -151,6 +183,7 @@ const App: React.FC = () => {
     if (!baseImage || !retouchMask) return;
 
     setIsLoading(true);
+    setLoadingMessage('Applying AI retouch...');
     setError(null);
     try {
         const image = new Image();
@@ -185,6 +218,7 @@ const App: React.FC = () => {
         setError(errorMessage);
     } finally {
         setIsLoading(false);
+        setLoadingMessage('Generating...');
     }
   }, [baseImage, retouchMask, handleClearMask]);
 
@@ -236,6 +270,15 @@ const App: React.FC = () => {
   };
 
   const renderContent = () => {
+    if (isLoading) {
+        return (
+            <div className="text-center animate-fade-in flex flex-col items-center gap-4">
+                <Spinner />
+                <p className="text-xl text-gray-300">{loadingMessage}</p>
+            </div>
+        );
+    }
+
     if (error) {
        return (
            <div className="text-center animate-fade-in bg-red-500/10 border border-red-500/20 p-8 rounded-lg max-w-2xl mx-auto flex flex-col items-center gap-4">
@@ -252,7 +295,7 @@ const App: React.FC = () => {
     }
     
     if (!baseImage) {
-      return <StartScreen onGenerate={handleGenerate} onUpload={handleUpload} isLoading={isLoading} />;
+      return <StartScreen onStartDesigner={() => setIsDesignerOpen(true)} isLoading={isLoading} />;
     }
 
     const editorButtonClasses = (mode: EditorMode) => `flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-colors ${editorMode === mode ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-white/10'}`;
@@ -339,13 +382,12 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen text-gray-100 flex flex-col">
       <Header />
-      <main className={`flex-grow w-full max-w-[1600px] mx-auto p-4 md:p-8 flex justify-center ${baseImage ? 'items-start' : 'items-center'}`}>
+      <main className={`flex-grow w-full max-w-[1600px] mx-auto p-4 md:p-8 flex justify-center items-center`}>
         {renderContent()}
-        {uploadedImageForEditing && (
-            <UploadEditModal
-                imageSrc={uploadedImageForEditing}
-                onClose={() => setUploadedImageForEditing(null)}
-                onGenerate={handleGenerateThumbnailFromUpload}
+        {isDesignerOpen && (
+            <DesignerModal
+                onClose={() => setIsDesignerOpen(false)}
+                onDesign={handleDesignThumbnail}
             />
         )}
       </main>
