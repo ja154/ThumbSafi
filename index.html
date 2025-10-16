@@ -5,6 +5,7 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ThumbSafi</title>
+    <link rel="stylesheet" href="https://esm.sh/react-image-crop@11.0.5/dist/ReactCrop.css">
     <script src="https://cdn.tailwindcss.com"></script>
   <script type="importmap">
 {
@@ -12,7 +13,8 @@
     "react/": "https://esm.sh/react@^19.1.0/",
     "react": "https://esm.sh/react@^19.1.0",
     "react-dom/": "https://esm.sh/react-dom@^19.1.0/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.10.0"
+    "@google/genai": "https://esm.sh/@google/genai@^1.10.0",
+    "react-image-crop": "https://esm.sh/react-image-crop@11.0.5"
   }
 }
 </script>
@@ -172,6 +174,19 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #6a6a8a;
+}
+
+/* Custom styles for ReactCrop */
+.inactive-crop .ReactCrop__crop-selection {
+    border-style: none;
+}
+.inactive-crop .ReactCrop__drag-handle,
+.inactive-crop .ReactCrop__rule-of-thirds-vt,
+.inactive-crop .ReactCrop__rule-of-thirds-hz {
+    display: none;
+}
+.ReactCrop__crop-selection {
+    border: 2px dashed white;
 }
 </style>
   <link rel="stylesheet" href="/index.css">

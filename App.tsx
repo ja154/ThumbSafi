@@ -4,6 +4,7 @@
 */
 
 import React, { useState, useCallback, useRef } from 'react';
+import ReactCrop, { type Crop, type PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import { generateImage, editImage, getThumbnailDesign, removeImageBackground, DesignSpecification, TextSpec } from './services/geminiService';
 import Header from './components/Header';
 import Spinner from './components/Spinner';
@@ -11,8 +12,9 @@ import StartScreen from './components/StartScreen';
 import ControlPanel from './components/FilterPanel';
 import EditorPreview from './components/EditorPreview';
 import RetouchPanel from './components/RetouchPanel';
+import CropPanel from './components/CropPanel';
 import DesignerModal from './components/DesignerModal';
-import { TextIcon, StartOverIcon, BrushIcon } from './components/icons';
+import { TextIcon, StartOverIcon, BrushIcon, CropIcon } from './components/icons';
 
 // Helper to convert a File object to a base64 data URL
 const fileToDataURL = (file: File): Promise<string> => {
@@ -44,7 +46,7 @@ export type DesignerData = {
     subjectImage: File | null;
 };
 
-type EditorMode = 'text' | 'retouch';
+type EditorMode = 'text' | 'retouch' | 'crop';
 
 const App: React.FC = () => {
   const [baseImage, setBaseImage] = useState<string | null>(null);
@@ -56,9 +58,18 @@ const App: React.FC = () => {
   const [isDesignerOpen, setIsDesignerOpen] = useState(false);
 
   const [editorMode, setEditorMode] = useState<EditorMode>('text');
+  
+  // Retouch state
   const [retouchMask, setRetouchMask] = useState<string | null>(null);
   const [brushSize, setBrushSize] = useState<number>(40);
   const maskCanvasRef = useRef<HTMLCanvasElement>(null);
+  
+  // Crop state
+  const [crop, setCrop] = useState<Crop>();
+  const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
+  const [aspect, setAspect] = useState<number | undefined>();
+  const imgRef = useRef<HTMLImageElement>(null);
+
 
   const handleDesignThumbnail = useCallback(async (data: DesignerData) => {
     setIsDesignerOpen(false);
@@ -141,6 +152,8 @@ const App: React.FC = () => {
     setIsLoading(false);
     setRetouchMask(null);
     setEditorMode('text');
+    setCrop(undefined);
+    setCompletedCrop(undefined);
   }, []);
 
   const addText = useCallback(() => {
@@ -221,6 +234,50 @@ const App: React.FC = () => {
         setLoadingMessage('Generating...');
     }
   }, [baseImage, retouchMask, handleClearMask]);
+
+  const handleApplyCrop = useCallback(async () => {
+    if (!completedCrop || !imgRef.current) {
+      return;
+    }
+    const image = imgRef.current;
+    const canvas = document.createElement('canvas');
+    const scaleX = image.naturalWidth / image.width;
+    const scaleY = image.naturalHeight / image.height;
+    
+    canvas.width = completedCrop.width;
+    canvas.height = completedCrop.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(
+      image,
+      completedCrop.x * scaleX,
+      completedCrop.y * scaleY,
+      completedCrop.width * scaleX,
+      completedCrop.height * scaleY,
+      0,
+      0,
+      completedCrop.width,
+      completedCrop.height
+    );
+
+    const croppedImageUrl = canvas.toDataURL('image/png');
+    setBaseImage(croppedImageUrl);
+    setEditorMode('text');
+    setCrop(undefined);
+    setCompletedCrop(undefined);
+  }, [completedCrop]);
+    
+  function onImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
+      if (aspect) {
+          const { width, height } = e.currentTarget;
+          setCrop(centerCrop(
+              makeAspectCrop({ unit: '%', width: 90 }, aspect, width, height),
+              width,
+              height
+          ));
+      }
+  }
 
   const handleDownload = useCallback(() => {
     if (!baseImage) return;
@@ -310,6 +367,9 @@ const App: React.FC = () => {
             <button onClick={() => setEditorMode('retouch')} className={editorButtonClasses('retouch')}>
                 <BrushIcon className="w-5 h-5" /> AI Retouch
             </button>
+            <button onClick={() => setEditorMode('crop')} className={editorButtonClasses('crop')}>
+                <CropIcon className="w-5 h-5" /> Crop
+            </button>
         </div>
 
         <div className="w-full max-w-7xl mx-auto flex flex-col lg:flex-row items-start gap-6">
@@ -326,6 +386,12 @@ const App: React.FC = () => {
                     onMaskChange={setRetouchMask}
                     isLoading={isLoading}
                     maskCanvasRef={maskCanvasRef}
+                    crop={crop}
+                    onCropChange={setCrop}
+                    onCropComplete={setCompletedCrop}
+                    aspect={aspect}
+                    imgRef={imgRef}
+                    onImageLoad={onImageLoad}
                 />
                 {/* Action Buttons */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -355,7 +421,7 @@ const App: React.FC = () => {
             </div>
             {/* Right Side: Control Panel */}
             <div className="w-full lg:w-96 lg:max-w-sm flex-shrink-0">
-                {editorMode === 'text' ? (
+                {editorMode === 'text' && (
                     <ControlPanel
                         textElements={textElements}
                         selectedTextId={selectedTextId}
@@ -363,7 +429,8 @@ const App: React.FC = () => {
                         onDeleteText={deleteText}
                         onUpdateText={updateText}
                     />
-                ) : (
+                )}
+                {editorMode === 'retouch' && (
                     <RetouchPanel
                         onApplyRetouch={handleApplyRetouch}
                         isLoading={isLoading}
@@ -371,6 +438,14 @@ const App: React.FC = () => {
                         onBrushSizeChange={setBrushSize}
                         onClearMask={handleClearMask}
                         hasMask={!!retouchMask}
+                    />
+                )}
+                {editorMode === 'crop' && (
+                    <CropPanel
+                        onApplyCrop={handleApplyCrop}
+                        onSetAspect={setAspect}
+                        isLoading={isLoading}
+                        isCropping={!!completedCrop}
                     />
                 )}
             </div>

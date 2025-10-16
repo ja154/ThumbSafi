@@ -4,6 +4,7 @@
 */
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import ReactCrop, { type Crop, type PixelCrop } from 'react-image-crop';
 import type { TextElement } from '../App';
 
 interface EditorPreviewProps {
@@ -12,11 +13,17 @@ interface EditorPreviewProps {
   selectedTextId: string | null;
   onSelectText: (id: string) => void;
   getTextShadow: (text: TextElement) => string;
-  editorMode: 'text' | 'retouch';
+  editorMode: 'text' | 'retouch' | 'crop';
   brushSize: number;
-  onMaskChange: (maskDataUrl: string) => void;
+  onMaskChange: (maskDataUrl: string | null) => void;
   isLoading: boolean;
   maskCanvasRef: React.RefObject<HTMLCanvasElement>;
+  crop: Crop | undefined;
+  onCropChange: (crop: Crop) => void;
+  onCropComplete: (crop: PixelCrop) => void;
+  aspect: number | undefined;
+  imgRef: React.RefObject<HTMLImageElement>;
+  onImageLoad: (e: React.SyntheticEvent<HTMLImageElement>) => void;
 }
 
 const EditorPreview: React.FC<EditorPreviewProps> = ({
@@ -30,6 +37,12 @@ const EditorPreview: React.FC<EditorPreviewProps> = ({
   onMaskChange,
   isLoading,
   maskCanvasRef,
+  crop,
+  onCropChange,
+  onCropComplete,
+  aspect,
+  imgRef,
+  onImageLoad,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -93,7 +106,7 @@ const EditorPreview: React.FC<EditorPreviewProps> = ({
   };
   
   const handleMouseUp = () => {
-    if (editorMode !== 'retouch') return;
+    if (editorMode !== 'retouch' || !isDrawing) return;
     setIsDrawing(false);
     
     if (maskCanvasRef.current) {
@@ -109,18 +122,18 @@ const EditorPreview: React.FC<EditorPreviewProps> = ({
         const data = imageData.data;
         let hasDrawing = false;
         for (let i = 0; i < data.length; i += 4) {
-            if (data[i + 3] > 0) {
+            if (data[i + 3] > 0) { // Check if pixel is not transparent
                 hasDrawing = true;
+                // Make it pure white for the mask
                 data[i] = 255; data[i + 1] = 255; data[i + 2] = 255; data[i + 3] = 255;
             } else {
+                // Make it pure black for the mask
                 data[i] = 0; data[i + 1] = 0; data[i + 2] = 0; data[i + 3] = 255;
             }
         }
         bwCtx.putImageData(imageData, 0, 0);
         
-        if(hasDrawing) {
-            onMaskChange(bwMaskCanvas.toDataURL('image/png'));
-        }
+        onMaskChange(hasDrawing ? bwMaskCanvas.toDataURL('image/png') : null);
     }
   };
 
@@ -139,12 +152,31 @@ const EditorPreview: React.FC<EditorPreviewProps> = ({
 
   return (
     <div ref={containerRef} className="w-full aspect-video bg-black/50 rounded-lg shadow-2xl overflow-hidden relative border border-gray-700">
-        {baseImage && <img src={baseImage} alt="Thumbnail background" className="w-full h-full object-cover" />}
+        {baseImage && (
+            <ReactCrop
+                crop={crop}
+                onChange={(_, percentCrop) => onCropChange(percentCrop)}
+                onComplete={c => onCropComplete(c)}
+                aspect={aspect}
+                disabled={editorMode !== 'crop' || isLoading}
+                className={`w-full h-full ${editorMode !== 'crop' ? 'inactive-crop' : ''}`}
+            >
+                <img
+                    ref={imgRef}
+                    alt="Thumbnail preview"
+                    src={baseImage}
+                    onLoad={onImageLoad}
+                    style={{ objectFit: 'cover', width: '100%', height: '100%' }}
+                />
+            </ReactCrop>
+        )}
+
+        {/* Text Elements Overlay */}
         {textElements.map(text => (
             <div
                 key={text.id}
-                onClick={() => onSelectText(text.id)}
-                className={`absolute cursor-pointer p-2 ${selectedTextId === text.id ? 'outline-dashed outline-2 outline-blue-400' : ''}`}
+                onClick={() => editorMode === 'text' && onSelectText(text.id)}
+                className={`absolute p-2 ${editorMode === 'text' ? 'cursor-pointer' : 'pointer-events-none'} ${selectedTextId === text.id ? 'outline-dashed outline-2 outline-blue-400' : ''}`}
                 style={{
                     top: `${text.top}%`,
                     left: `${text.left}%`,
@@ -159,6 +191,8 @@ const EditorPreview: React.FC<EditorPreviewProps> = ({
                 {text.content}
             </div>
         ))}
+        
+        {/* Retouch Canvas Overlay */}
         <canvas
             ref={maskCanvasRef}
             onMouseDown={handleMouseDown}
