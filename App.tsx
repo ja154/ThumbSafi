@@ -5,7 +5,7 @@
 
 import React, { useState, useCallback, useRef } from 'react';
 import ReactCrop, { type Crop, type PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
-import { generateImage, editImage, getThumbnailDesign, removeImageBackground, DesignSpecification, TextSpec } from './services/geminiService';
+import { generateImage, editImage, getThumbnailDesign, removeImageBackground, createThumbnailFromImage, DesignSpecification, TextSpec } from './services/geminiService';
 import Header from './components/Header';
 import Spinner from './components/Spinner';
 import StartScreen from './components/StartScreen';
@@ -14,6 +14,7 @@ import EditorPreview from './components/EditorPreview';
 import RetouchPanel from './components/RetouchPanel';
 import CropPanel from './components/CropPanel';
 import DesignerModal from './components/DesignerModal';
+import UploadEditModal from './components/UploadEditModal';
 import { TextIcon, StartOverIcon, BrushIcon, CropIcon } from './components/icons';
 
 // Helper to convert a File object to a base64 data URL
@@ -56,6 +57,7 @@ const App: React.FC = () => {
   const [loadingMessage, setLoadingMessage] = useState<string>('Generating...');
   const [error, setError] = useState<string | null>(null);
   const [isDesignerOpen, setIsDesignerOpen] = useState(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
 
   const [editorMode, setEditorMode] = useState<EditorMode>('text');
   
@@ -143,6 +145,25 @@ const App: React.FC = () => {
         setLoadingMessage('Generating...');
     }
   }, []);
+
+    const handleCreateFromUpload = useCallback(async (baseImage: string, prompt: string) => {
+        setIsUploadModalOpen(false);
+        setIsLoading(true);
+        setLoadingMessage('Transforming your image...');
+        setError(null);
+        try {
+            const newImage = await createThumbnailFromImage(baseImage, prompt);
+            setBaseImage(newImage);
+            setTextElements([]); // Start with a clean slate for text
+            setEditorMode('text');
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+            setError(errorMessage);
+        } finally {
+            setIsLoading(false);
+            setLoadingMessage('Generating...');
+        }
+    }, []);
 
   const handleStartOver = useCallback(() => {
     setBaseImage(null);
@@ -352,7 +373,7 @@ const App: React.FC = () => {
     }
     
     if (!baseImage) {
-      return <StartScreen onStartDesigner={() => setIsDesignerOpen(true)} isLoading={isLoading} />;
+      return <StartScreen onStartDesigner={() => setIsDesignerOpen(true)} onStartFromUpload={() => setIsUploadModalOpen(true)} isLoading={isLoading} />;
     }
 
     const editorButtonClasses = (mode: EditorMode) => `flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-colors ${editorMode === mode ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-white/10'}`;
@@ -463,6 +484,12 @@ const App: React.FC = () => {
             <DesignerModal
                 onClose={() => setIsDesignerOpen(false)}
                 onDesign={handleDesignThumbnail}
+            />
+        )}
+        {isUploadModalOpen && (
+            <UploadEditModal
+                onClose={() => setIsUploadModalOpen(false)}
+                onCreate={handleCreateFromUpload}
             />
         )}
       </main>
