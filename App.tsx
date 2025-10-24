@@ -13,9 +13,10 @@ import ControlPanel from './components/FilterPanel';
 import EditorPreview from './components/EditorPreview';
 import RetouchPanel from './components/RetouchPanel';
 import CropPanel from './components/CropPanel';
+import AdjustmentPanel from './components/AdjustmentPanel';
 import DesignerModal from './components/DesignerModal';
 import UploadEditModal from './components/UploadEditModal';
-import { TextIcon, StartOverIcon, BrushIcon, CropIcon } from './components/icons';
+import { TextIcon, StartOverIcon, BrushIcon, CropIcon, AdjustmentIcon } from './components/icons';
 
 // Helper to convert a File object to a base64 data URL
 const fileToDataURL = (file: File): Promise<string> => {
@@ -47,7 +48,7 @@ export type DesignerData = {
     subjectImage: File | null;
 };
 
-type EditorMode = 'text' | 'retouch' | 'crop';
+type EditorMode = 'text' | 'retouch' | 'crop' | 'adjust';
 
 const App: React.FC = () => {
   const [baseImage, setBaseImage] = useState<string | null>(null);
@@ -164,6 +165,25 @@ const App: React.FC = () => {
             setLoadingMessage('Generating...');
         }
     }, []);
+
+  const handleApplyAdjustment = useCallback(async (prompt: string) => {
+    if (!baseImage) return;
+
+    setIsLoading(true);
+    setLoadingMessage('Applying adjustment...');
+    setError(null);
+    try {
+        const newImage = await createThumbnailFromImage(baseImage, prompt);
+        setBaseImage(newImage);
+        setEditorMode('text');
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        setError(errorMessage);
+    } finally {
+        setIsLoading(false);
+        setLoadingMessage('Generating...');
+    }
+  }, [baseImage]);
 
   const handleStartOver = useCallback(() => {
     setBaseImage(null);
@@ -381,9 +401,12 @@ const App: React.FC = () => {
     return (
       <div className="w-full flex flex-col items-center gap-4 animate-fade-in">
         {/* Editor Mode Toolbar */}
-        <div className="bg-gray-800/60 border border-gray-700 p-1 rounded-lg flex items-center gap-1 backdrop-blur-sm">
+        <div className="bg-gray-800/60 border border-gray-700 p-1 rounded-lg flex flex-wrap items-center justify-center gap-1 backdrop-blur-sm">
             <button onClick={() => setEditorMode('text')} className={editorButtonClasses('text')}>
                 <TextIcon className="w-5 h-5" /> Text & Layers
+            </button>
+            <button onClick={() => setEditorMode('adjust')} className={editorButtonClasses('adjust')}>
+                <AdjustmentIcon className="w-5 h-5" /> AI Adjust
             </button>
             <button onClick={() => setEditorMode('retouch')} className={editorButtonClasses('retouch')}>
                 <BrushIcon className="w-5 h-5" /> AI Retouch
@@ -449,6 +472,12 @@ const App: React.FC = () => {
                         onSelectText={setSelectedTextId}
                         onDeleteText={deleteText}
                         onUpdateText={updateText}
+                    />
+                )}
+                {editorMode === 'adjust' && (
+                    <AdjustmentPanel
+                        onApplyAdjustment={handleApplyAdjustment}
+                        isLoading={isLoading}
                     />
                 )}
                 {editorMode === 'retouch' && (
